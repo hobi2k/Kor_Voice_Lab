@@ -1,0 +1,8 @@
+numpy
+onnxruntime
+soundfile
+transformers
+g2pkk
+jamo
+anyascii
+python-mecab-ko
