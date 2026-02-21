@@ -13,6 +13,7 @@ Examples:
     --out out_cpu.wav
 """
 import argparse
+import re
 import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -23,6 +24,7 @@ import soundfile as sf
 from transformers import AutoTokenizer
 from anyascii import anyascii
 from jamo import hangul_to_jamo
+from g2pkk import G2p
 
 from melo.text import cleaned_text_to_sequence
 from melo.text.symbols import punctuation
@@ -85,7 +87,6 @@ def _resolve_tokenizer_source(bert_onnx_path: Optional[str], fallback_model_id: 
 def normalize_with_dictionary(text: str, dic: Dict[str, str]) -> str:
     """치환 사전을 이용해 텍스트를 일괄 치환한다."""
     if any(key in text for key in dic.keys()):
-        import re
         pattern = re.compile("|".join(re.escape(key) for key in dic.keys()))
         return pattern.sub(lambda x: dic[x.group()], text)
     return text
@@ -93,7 +94,6 @@ def normalize_with_dictionary(text: str, dic: Dict[str, str]) -> str:
 
 def normalize_english(text: str) -> str:
     """영문 토큰을 한글 발음 사전에 따라 치환한다."""
-    import re
     def fn(m: re.Match) -> str:
         word = m.group()
         if word in english_dictionary:
@@ -105,7 +105,6 @@ def normalize_english(text: str) -> str:
 
 def text_normalize(text: str) -> str:
     """KR 추론용 텍스트 정규화(불필요 문자 제거/치환/소문자화)를 수행한다."""
-    import re
     text = text.strip()
     text = re.sub(r"[\u2E80-\u2EF3\u2F00-\u2FD5\u3005\u3007\u3021-\u3029\u3038-\u303A\u303B\u3400-\u9FFF\uF900-\uFA6D]", "", text)
     text = normalize_with_dictionary(text, etc_dictionary)
@@ -121,7 +120,6 @@ def korean_text_to_phonemes(text: str, character: str = "hangeul") -> str:
     """한국어 텍스트를 g2pkk+자모 분해로 phone 문자열로 변환한다."""
     global _g2p_kr
     if _g2p_kr is None:
-        from g2pkk import G2p
         _g2p_kr = G2p()
 
     if character == "english":
@@ -272,12 +270,12 @@ def infer_tts_onnx(
     symbols = hps.symbols
     symbol_to_id = {s: i for i, s in enumerate(symbols)}
 
-    # 1) 텍스트 정규화 + g2p
+    # 1. 텍스트 정규화 + g2p
     norm_text = text_normalize(text)
     phones, tones, word2ph = g2p_kr(norm_text, model_id=tokenizer_source)
     phones, tones, lang_ids = cleaned_text_to_sequence(phones, tones, language, symbol_to_id)
 
-    # 2) add_blank 규칙 적용(학습/추론 일치)
+    # 2. add_blank 규칙 적용(학습/추론 일치)
     if getattr(hps.data, "add_blank", False):
         phones = intersperse(phones, 0)
         tones = intersperse(tones, 0)
@@ -286,7 +284,7 @@ def infer_tts_onnx(
             word2ph[i] = word2ph[i] * 2
         word2ph[0] += 1
 
-    # 3) BERT feature 구성(KR은 ja_bert 사용)
+    # 3. BERT feature 구성(KR은 ja_bert 사용)
     if getattr(hps.data, "disable_bert", False):
         bert = np.zeros((1024, len(phones)), dtype=np.float32)
         ja_bert = np.zeros((768, len(phones)), dtype=np.float32)
@@ -308,7 +306,7 @@ def infer_tts_onnx(
     if ja_bert.shape[1] != len(phones):
         raise RuntimeError(f"ja_bert len mismatch: {ja_bert.shape[1]} vs {len(phones)}")
 
-    # 4) 배치 차원 구성(B=1)
+    # 4. 배치 차원 구성(B=1)
     x = np.array(phones, dtype=np.int64)[None, :]
     tone = np.array(tones, dtype=np.int64)[None, :]
     language_ids = np.array(lang_ids, dtype=np.int64)[None, :]
@@ -322,14 +320,14 @@ def infer_tts_onnx(
     noise_scale_w = np.array(noise_scale_w, dtype=np.float32)
     length_scale = np.array(length_scale, dtype=np.float32)
 
-    # 5) ONNX Runtime 세션 생성(TTS)
+    # 5. ONNX Runtime 세션 생성(TTS)
     providers = ["CPUExecutionProvider"]
     if device == "cuda":
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
     sess = ort.InferenceSession(onnx_path, providers=providers)
 
-    # 6) 추론 실행(그래프에 없는 optional 입력은 자동 제외)
+    # 6. 추론 실행(그래프에 없는 optional 입력은 자동 제외)
     input_names = {i.name for i in sess.get_inputs()}
     feed = {
         "x": x,
@@ -349,7 +347,7 @@ def infer_tts_onnx(
 
     audio = audio[0, 0]
 
-    # 7) wav 저장
+    # 7. wav 저장
     sr = hps.data.sampling_rate
     sf.write(out_path, audio, sr)
     print(f"[OK] saved → {out_path}")

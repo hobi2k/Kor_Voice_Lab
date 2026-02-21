@@ -13,6 +13,7 @@ uv run infer_onnx.py \
 """
 import argparse
 import json
+import re
 import os
 import sys
 from pathlib import Path
@@ -24,6 +25,7 @@ import soundfile as sf
 from transformers import AutoTokenizer
 from anyascii import anyascii
 from jamo import hangul_to_jamo
+from g2pkk import G2p
 
 # Allow running as a script from the tts_runtime directory.
 try:
@@ -88,15 +90,12 @@ def _resolve_tokenizer_source(bert_onnx_path: Optional[str], fallback_model_id: 
 
 def normalize_with_dictionary(text: str, dic: Dict[str, str]) -> str:
     if any(key in text for key in dic.keys()):
-        import re
-
         pattern = re.compile("|".join(re.escape(key) for key in dic.keys()))
         return pattern.sub(lambda x: dic[x.group()], text)
     return text
 
 
 def normalize_english(text: str) -> str:
-    import re
 
     def fn(m: re.Match) -> str:
         word = m.group()
@@ -108,7 +107,6 @@ def normalize_english(text: str) -> str:
 
 
 def text_normalize(text: str) -> str:
-    import re
 
     text = text.strip()
     text = re.sub(
@@ -128,7 +126,6 @@ _g2p_kr = None
 def korean_text_to_phonemes(text: str, character: str = "hangeul") -> str:
     global _g2p_kr
     if _g2p_kr is None:
-        from g2pkk import G2p
 
         _g2p_kr = G2p()
 
