@@ -163,7 +163,7 @@ def build_model_and_load(hps, ckpt_path: str, device: str):
 
     missing, unexpected = model.load_state_dict(load_dict, strict=False)
 
-    # 디버그 출력 (원하면 더 빡세게 체크 가능)
+    # 디버그 출력
     if any(not m.startswith(skip_prefixes) for m in missing):
         real_missing = [m for m in missing if not m.startswith(skip_prefixes)]
         raise RuntimeError(f"[LOAD MISSING (unexpected)] {real_missing[:20]}")

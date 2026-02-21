@@ -1,21 +1,17 @@
-# melo/models/modules_onnx.py
-# ============================================================
-# ONNX 전용 모듈 구현 (forward-only, reverse/logdet/randn 제거)
-#
-# 목적:
-# - 기존 melo/models/modules.py 는 건드리지 않는다.
-# - ONNX export / ONNX Runtime 추론을 위해 "그래프가 고정되는" 경로만 제공한다.
-#
-# 핵심 원칙(ONNX 안정성):
-# 1) reverse=True / 역변환 제거 (flow는 forward-only)
-# 2) logdet 반환 제거 (추론에 불필요)
-# 3) torch.randn / randn_like / Python list 조작 최소화
-# 4) 가능하면 텐서 연산만으로 구성
-#
-# 주의:
-# - 이 파일은 "학습용"이 아니다. 오직 ONNX 추론 그래프를 만들기 위한 전용 구현이다.
-# - SynthesizerTrnONNX 같은 래퍼에서 이 모듈들을 사용하도록 분기해야 한다.
-# ============================================================
+"""
+melo/models/modules_onnx.py
+ONNX 전용 모듈 구현 (forward-only, reverse/logdet/randn 제거)
+
+목적:
+- 기존 melo/models/modules.py 는 건드리지 않는다.
+- ONNX export / ONNX Runtime 추론을 위해 "그래프가 고정되는" 경로만 제공한다.
+
+핵심 원칙(ONNX 안정성):
+1. reverse=True / 역변환 제거 (flow는 forward-only)
+2. logdet 반환 제거 (추론에 불필요)
+3. torch.randn / randn_like / Python list 조작 최소화
+4. 텐서 연산만으로 구성
+"""
 
 from __future__ import annotations
 
@@ -27,12 +23,10 @@ from torch.nn import functional as F
 from torch.nn import Conv1d
 from torch.nn.utils import weight_norm, remove_weight_norm
 
-# ------------------------------------------------------------
 # 내부 의존 모듈 (기존 코드 재사용)
 # - commons: fused_add_tanh_sigmoid_multiply, init_weights, get_padding 등
-# - attentions.Encoder: TransformerCouplingLayer에 사용 가능(원본과 동일)
+# - attentions.Encoder: TransformerCouplingLayer에 사용 가능
 # - transforms_onnx: piecewise_rational_quadratic_transform (ONNX-safe 버전)
-# ------------------------------------------------------------
 from . import commons
 from .commons import init_weights, get_padding
 from .attentions import Encoder
@@ -42,14 +36,12 @@ from .transforms_onnx import piecewise_rational_quadratic_transform
 LRELU_SLOPE = 0.1
 
 
-# ============================================================
 # Basic layers
-# ============================================================
 
 class LayerNorm(nn.Module):
     """
-    Conv1d 계열 텐서 [B, C, T]를 대상으로 하는 LayerNorm.
-    - ONNX에서는 F.layer_norm이 안정적으로 변환되는 편이라 그대로 사용.
+    Conv1d 계열 텐서 [B, C, T]를 대상으로 하는 LayerNorm
+    - ONNX에서는 F.layer_norm이 안정적으로 변환되는 편이라 그대로 사용
     """
     def __init__(self, channels: int, eps: float = 1e-5) -> None:
         super().__init__()
@@ -69,7 +61,7 @@ class LayerNorm(nn.Module):
 
 class ConvReluNorm(nn.Module):
     """
-    Conv1d + LayerNorm + ReLU + Dropout 블록.
+    Conv1d + LayerNorm + ReLU + Dropout 블록
     """
     def __init__(
         self,
@@ -109,7 +101,7 @@ class ConvReluNorm(nn.Module):
         self.relu_drop = nn.Sequential(nn.ReLU(), nn.Dropout(p_dropout))
 
         self.proj = nn.Conv1d(hidden_channels, out_channels, 1)
-        # residual 시작 시 안정화를 위해 zero init (원본 관례)
+        # residual 시작 시 안정화를 위해 zero init 
         self.proj.weight.data.zero_()
         self.proj.bias.data.zero_()
 
@@ -126,7 +118,7 @@ class ConvReluNorm(nn.Module):
 
 class DDSConv(nn.Module):
     """
-    Dilated Depth-Separable Convolution (원본과 동일 개념)
+    Dilated Depth-Separable Convolution
     - ONNX에서 groups convolution / dilation은 일반적으로 지원됨(opset 17 기준).
     """
     def __init__(self, channels: int, kernel_size: int, n_layers: int, p_dropout: float = 0.0) -> None:
@@ -181,8 +173,6 @@ class WN(nn.Module):
     """
     WaveNet-style Dilated Conv 블록.
     - fused_add_tanh_sigmoid_multiply 사용 (commons에 존재)
-    - ONNX에서 weight_norm은 export 시 weight_g/weight_v 형태로 남을 수 있어,
-      가능하면 export 전에 remove_weight_norm()을 호출하는 것을 권장.
     """
     def __init__(
         self,
@@ -280,10 +270,7 @@ class WN(nn.Module):
             remove_weight_norm(l)
 
 
-# ============================================================
 # HiFiGAN resblocks (decoder parts)
-# ============================================================
-
 class ResBlock1(nn.Module):
     def __init__(self, channels: int, kernel_size: int = 3, dilation: tuple[int, int, int] = (1, 3, 5)) -> None:
         super().__init__()
@@ -358,11 +345,8 @@ class ResBlock2(nn.Module):
             remove_weight_norm(l)
 
 
-# ============================================================
 # Flow components (ONNX forward-only)
 # - reverse/logdet 제거
-# ============================================================
-
 class FlipONNX(nn.Module):
     """
     채널 축 뒤집기.
@@ -592,12 +576,9 @@ class TransformerCouplingLayerONNX(nn.Module):
         return y
 
 
-# ============================================================
 # Flow container (forward-only)
 # - 기존 FlowBlock이 (x, logdet) / reverse를 쓰는 구조라면,
 #   ONNX에서는 이 컨테이너를 SynthesizerTrnONNX에서 사용하도록 분기한다.
-# ============================================================
-
 class ResidualCouplingBlockONNX(nn.Module):
     """
     여러 ResidualCouplingLayerONNX + FlipONNX로 구성되는 forward-only flow 블록.
@@ -640,7 +621,7 @@ class ResidualCouplingBlockONNX(nn.Module):
 
 class TransformerCouplingBlockONNX(nn.Module):
     """
-    여러 TransformerCouplingLayerONNX + FlipONNX로 구성되는 forward-only flow 블록.
+    여러 TransformerCouplingLayerONNX + FlipONNX로 구성되는 forward-only flow 블록
     """
     def __init__(
         self,
@@ -658,8 +639,8 @@ class TransformerCouplingBlockONNX(nn.Module):
         super().__init__()
         self.flows = nn.ModuleList()
 
-        # (옵션) 파라미터 공유: 원본은 wn_sharing_parameter를 쓰지만,
-        # ONNX에서는 구현 단순성을 위해 share_parameter=False 권장.
+        # 파라미터 공유: 원본은 wn_sharing_parameter를 쓰지만,
+        # ONNX에서는 구현 단순성을 위해 share_parameter=False 
         shared_encoder = None
         if share_parameter:
             shared_encoder = Encoder(

@@ -6,6 +6,7 @@ uv run scripts/bert_onnx_converter.py \
 """
 
 import argparse
+from pathlib import Path
 import torch
 from transformers import BertModel, BertTokenizer
 
@@ -68,10 +69,12 @@ def export_onnx(args):
     dummy_inputs = make_dummy_inputs(tokenizer, device)
 
     print("[INFO] exporting BERT ONNX (hidden_states[-3])...")
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     torch.onnx.export(
         onnx_model,
         dummy_inputs,
-        args.out,
+        str(out_path),
         opset_version=18,
         input_names=["input_ids", "attention_mask"],
         output_names=["hidden_state_m3"],
@@ -85,7 +88,10 @@ def export_onnx(args):
         dynamo=False,
     )
 
-    print(f"[OK] BERT ONNX saved → {args.out}")
+    # ONNX 모델 경로의 폴더에 tokenizer 자산도 같이 저장한다.
+    tokenizer.save_pretrained(str(out_path.parent))
+    print(f"[OK] BERT ONNX saved → {out_path}")
+    print(f"[OK] tokenizer files saved → {out_path.parent}")
 
 
 def main():

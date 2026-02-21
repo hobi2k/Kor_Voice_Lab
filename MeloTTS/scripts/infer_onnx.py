@@ -14,6 +14,7 @@ Examples:
 """
 import argparse
 import json
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -28,9 +29,7 @@ from melo.text.symbols import punctuation
 from melo.text.ko_dictionary import english_dictionary, etc_dictionary
 
 
-# ==========================================================
 # Minimal HParams (torch-free)
-# ==========================================================
 class HParams:
     """중첩 dict를 속성 접근 가능한 객체로 감싸는 간단한 컨테이너."""
 
@@ -54,9 +53,7 @@ def get_hparams_from_file(config_path: str) -> HParams:
     return HParams(**data)
 
 
-# ==========================================================
 # Korean text normalize + g2p (torch-free)
-# ==========================================================
 BERT_MODEL_ID = "kykim/bert-kor-base"
 _tokenizers: Dict[str, AutoTokenizer] = {}
 
@@ -66,6 +63,23 @@ def _get_tokenizer(model_id: str) -> AutoTokenizer:
     if model_id not in _tokenizers:
         _tokenizers[model_id] = AutoTokenizer.from_pretrained(model_id)
     return _tokenizers[model_id]
+
+
+def _resolve_tokenizer_source(bert_onnx_path: Optional[str], fallback_model_id: str) -> str:
+    """
+    토크나이저 로드 경로를 결정한다.
+
+    우선순위:
+    1) --bert 로 전달된 ONNX 파일 폴더(bert_onnx_converter가 저장한 tokenizer 자산)
+    2) fallback_model_id(HF repo id 또는 로컬 경로)
+    """
+    if bert_onnx_path:
+        candidate = Path(bert_onnx_path).resolve().parent
+        has_tokenizer_cfg = (candidate / "tokenizer_config.json").exists()
+        has_vocab_file = (candidate / "tokenizer.json").exists() or (candidate / "vocab.txt").exists()
+        if has_tokenizer_cfg and has_vocab_file:
+            return str(candidate)
+    return fallback_model_id
 
 
 def normalize_with_dictionary(text: str, dic: Dict[str, str]) -> str:
@@ -190,9 +204,7 @@ def intersperse(lst: List[int], item: int) -> List[int]:
     return result
 
 
-# ==========================================================
 # BERT ONNX (KR) -> phone-level feature
-# ==========================================================
 class BertOnnxRunner:
     """BERT ONNX를 실행해 phone-level feature를 생성하는 런타임 래퍼."""
 
@@ -231,9 +243,7 @@ class BertOnnxRunner:
         return phone_level.T  # [H, sum(word2ph)]
 
 
-# ============================================================
 # ONNX TTS Inference (TEXT → AUDIO)
-# ============================================================
 def infer_tts_onnx(
     onnx_path: str,
     bert_onnx_path: Optional[str],
@@ -258,12 +268,13 @@ def infer_tts_onnx(
         raise NotImplementedError("Torch-free pipeline currently supports KR only.")
 
     hps = get_hparams_from_file(config_path)
+    tokenizer_source = _resolve_tokenizer_source(bert_onnx_path, bert_model_id)
     symbols = hps.symbols
     symbol_to_id = {s: i for i, s in enumerate(symbols)}
 
     # 1) 텍스트 정규화 + g2p
     norm_text = text_normalize(text)
-    phones, tones, word2ph = g2p_kr(norm_text, model_id=bert_model_id)
+    phones, tones, word2ph = g2p_kr(norm_text, model_id=tokenizer_source)
     phones, tones, lang_ids = cleaned_text_to_sequence(phones, tones, language, symbol_to_id)
 
     # 2) add_blank 규칙 적용(학습/추론 일치)
@@ -286,7 +297,7 @@ def infer_tts_onnx(
         bert_runner = BertOnnxRunner(
             onnx_path=bert_onnx_path,
             provider=device,
-            model_id=bert_model_id,
+            model_id=tokenizer_source,
         )
         bert_feat = bert_runner.run(norm_text, word2ph)
         ja_bert = bert_feat.astype(np.float32)
@@ -344,16 +355,17 @@ def infer_tts_onnx(
     print(f"[OK] saved → {out_path}")
     return audio
 
-
-# ============================================================
 # CLI
-# ============================================================
 def main():
     """CLI 엔트리포인트."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--onnx", required=True, help="TTS ONNX model path")
     parser.add_argument("--bert", default=None, help="BERT ONNX model path (KR)")
-    parser.add_argument("--bert_model", default=BERT_MODEL_ID, help="HF tokenizer model id")
+    parser.add_argument(
+        "--bert_model",
+        default=BERT_MODEL_ID,
+        help="fallback tokenizer source. if --bert folder has tokenizer files, that path is used first.",
+    )
     parser.add_argument("--config", required=True, help="config.json path")
     parser.add_argument("--text", required=True)
     parser.add_argument("--speaker", type=int, default=0)

@@ -1,299 +1,450 @@
-# Kor_Voice_Lab 전체 아키텍처
+# Kor_Voice_Lab 아키텍처 명세
 
-이 문서는 `Kor_Voice_Lab`의 ASR -> 전처리 -> MeloTTS 학습/추론 -> ONNX 변환/추론까지 전체 구조를 코드 기준으로 정리한다.
-
-## 1. 시스템 구성 개요
-
-프로젝트는 크게 4개 계층으로 나뉜다.
-
-1) 데이터 수집/정제  
-- `preprocess/1.data_download.py`  
-- `preprocess/2.resampling.py`  
-- `preprocess/3.make_filelists.py`  
-- `preprocess/4.policy_adapter.py`
-
-2) ASR 전사  
-- `asr_lab/transcribe_whisper.py`
-
-3) MeloTTS 학습/파이토치 추론  
-- `MeloTTS/melo/train.py`  
-- `MeloTTS/melo/models.py`, `MeloTTS/melo/modules.py`, `MeloTTS/melo/attentions.py`  
-- `MeloTTS/melo/infer.py`, `MeloTTS/melo/api.py`
-
-4) ONNX 변환/ONNX 추론  
-- `MeloTTS/scripts/bert_onnx_converter.py`  
-- `MeloTTS/scripts/onnx_converter.py`  
-- `MeloTTS/scripts/infer_onnx.py`  
-- `MeloTTS/tts_runtime/infer_onnx.py` (독립 런타임 패키지)
+이 문서는 `Kor_Voice_Lab`를 구현 명세를 정리한 것이다.
 
 ---
 
-## 2. 최상위 데이터 흐름
+## 0. 표기법
 
-### 2-1. 학습 흐름
+- `B`: batch size
+- `T_text`: 텍스트 토큰 길이(phone 시퀀스 길이)
+- `T_spec`: mel/spectrogram 프레임 길이
+- `T_wav`: waveform 샘플 길이
+- `H`: hidden channel
+- `C`: latent/intermediate channel (`inter_channels`)
 
-`원시 음성` -> `전사 metadata` -> `filelist` -> `config.json` -> `torchrun -m melo.train` -> `G/D/DUR 체크포인트`
-
-### 2-2. 추론 흐름(PyTorch)
-
-`텍스트` -> `text cleaner + g2p + BERT feature` -> `SynthesizerTrn` -> `wav`
-
-### 2-3. ONNX 추론 흐름
-
-`텍스트` -> `KR g2p + word2ph` -> `BERT ONNX(hidden_states[-3])` -> `TTS ONNX` -> `wav`
-
----
-
-## 3. 디렉토리/모듈 역할
-
-## 3-1. 루트 계층
-
-- `asr_lab/`: faster-whisper 기반 전사
-- `preprocess/`: 데이터셋 다운로드/리샘플링/메타 생성/필터링
-- `MeloTTS/`: 원본 MeloTTS 기반 TTS 엔진 + 한국어 커스텀 + ONNX 확장
-- `requirements.txt`: 루트 워크플로우 의존성(ASR/전처리/훈련 실행 환경)
-
-## 3-2. MeloTTS 내부 핵심
-
-- `melo/train.py`: 학습 엔트리포인트
-- `melo/utils.py`: argparse/hparams/config 로딩, 로거/체크포인트 유틸
-- `melo/data_utils.py`: filelist 기반 dataset/collate/sampler
-- `melo/models.py`: 학습/추론용 메인 모델(SynthesizerTrn 등)
-- `melo/modules.py`, `melo/attentions.py`, `melo/transforms.py`: 네트워크 블록/flow/attention
-- `melo/losses.py`: adversarial + mel + KL + duration 관련 loss
-- `melo/text/*`: 언어별 정규화, g2p, BERT feature 매핑
-- `melo/mel_processing.py`: mel/spectrogram 변환
-
-## 3-3. ONNX 계층
-
-- `melo/models_onnx.py`: ONNX용 모델 구성(추론 그래프 전용)
-- `melo/modules_onnx.py`: ONNX-safe 모듈 구현
-- `melo/transforms_onnx.py`: ONNX-safe spline/flow 수학 연산
-- `scripts/onnx_converter.py`: 체크포인트 -> TTS ONNX export
-- `scripts/bert_onnx_converter.py`: HF BERT -> ONNX export
-- `scripts/infer_onnx.py`: MeloTTS 내부 ONNX 추론 스크립트
-- `tts_runtime/`: 외부 프로젝트 이식용 독립 ONNX 런타임
+텐서 축 기준:
+- 텍스트/잠재: `[B, C, T]`
+- 파형: `[B, 1, T_wav]`
+- BERT feature: `[B, H_bert, T_text]`
 
 ---
 
-## 4. ASR 아키텍처 (`asr_lab/transcribe_whisper.py`)
+## 1. 시스템 분해
 
-## 4-1. 입력/출력 계약
+### 1-1. 파이프라인
 
-- 입력:
-  - `--audio_dir`: 오디오 폴더(재귀 탐색)
-  - `--speaker`, `--language`
-  - `--model`, `--device`, `--compute_type`, `--vad`, `--beam_size`
-- 출력:
-  - `metadata` 라인 포맷  
-    `path|speaker|language|text`
+1) ASR (`asr_lab/transcribe_whisper.py`)
+2) 전처리 (`preprocess/*.py`)
+3) TTS 학습 (`MeloTTS/melo/train.py`)
+4) Torch 추론 (`MeloTTS/melo/infer.py`)
+5) ONNX 변환
+   - BERT ONNX (`MeloTTS/scripts/bert_onnx_converter.py`)
+   - TTS ONNX (`MeloTTS/scripts/onnx_converter.py`)
+6) ONNX 추론
+   - 내부 스크립트 (`MeloTTS/scripts/infer_onnx.py`)
+   - 독립 런타임 (`MeloTTS/tts_runtime/infer_onnx.py`)
 
-## 4-2. 내부 처리 단계
+### 1-2. 데이터 계약(공통)
 
-1) 오디오 파일 수집 (`list_audio_files`)  
-2) optional prompt 로드 (`read_text_file`)  
-3) WhisperModel 생성 (모델 다운로드 위치: `asr_lab/pretrained`)  
-4) 파일 단위 전사 (`transcribe_one`)  
-   - VAD 사용 시 `min_silence_duration_ms=350`
-5) 텍스트 정리 후 metadata 저장
+학습/전처리 핵심 라인 포맷:
+
+```text
+wav_path|speaker_name|language_code|text
+```
+
+필수 조건:
+- `wav_path`는 실제 파일 존재
+- `speaker_name`은 config의 `spk2id`와 일치
+- `language_code`는 `cleaner`/`text` 모듈이 인식 가능
+- `text`는 비어 있지 않아야 함
 
 ---
 
-## 5. 전처리 아키텍처 (`preprocess/*.py`)
+## 2. 환경 재현 절차 (명령 고정)
 
-## 5-1. `1.data_download.py`
+### 2-1. 루트 환경
 
-- HuggingFace dataset 스트리밍 로드
+```bash
+uv venv --python 3.11
+source .venv/bin/activate
+uv pip install -r requirements.txt
+```
+
+### 2-2. MeloTTS editable 설치
+
+```bash
+cd MeloTTS
+uv pip install -e .
+```
+
+### 2-3. unidic(환경에 따라 필요)
+
+```bash
+uv run python -m unidic download
+```
+
+---
+
+## 3. ASR 명세
+
+파일: `asr_lab/transcribe_whisper.py`
+
+입력 인자(핵심):
+- `--audio_dir`
+- `--out_metadata`
+- `--speaker`
+- `--language`
+- `--model`, `--device`, `--compute_type`
+- `--vad`, `--beam_size`, `--initial_prompt_file`
+- `--absolute_path`
+
+알고리즘:
+1. `audio_dir` 재귀 탐색
+2. 확장자 필터
+3. Whisper 모델 로드 (`download_root=asr_lab/pretrained`)
+4. 파일별 전사
+5. 텍스트 최소 정리 후 metadata 저장
+
+VAD 사용 시:
+- `vad_filter=True`
+- `min_silence_duration_ms=350`
+
+산출물:
+- metadata text 파일 (`path|spk|lang|text`)
+
+---
+
+## 4. 전처리 명세
+
+### 4-1. `preprocess/1.data_download.py`
+
+- HF dataset stream 로드
 - 조건 필터(language/speaker/transcription)
-- audio bytes를 wav로 저장
+- audio bytes를 `.wav`로 저장
 - `metadata_raw.csv` 생성
 
-## 5-2. `2.resampling.py`
+### 4-2. `preprocess/2.resampling.py`
 
-- 입력 wav 일괄 로드
-- target sample rate로 리샘플링
-- mono + PCM_16으로 저장
+- 입력 wav를 target SR로 변환
+- mono + PCM_16 저장
 
-## 5-3. `3.make_filelists.py`
+### 4-3. `preprocess/3.make_filelists.py`
 
-- `metadata_raw.csv` 기반 `metadata.list` 생성
-- 텍스트 최소 정규화(`|`, 개행, 다중 공백 정리)
-- 한글 포함 여부 필터링
-- 포맷: `wav|speaker|language|text`
+- `metadata_raw.csv` -> `metadata.list`
+- 텍스트 정규화(개행/`|`/다중 공백)
+- 한국어 포함 여부 필터
 
-## 5-4. `4.policy_adapter.py`
+### 4-4. `preprocess/4.policy_adapter.py`
 
-- 정책 기반 텍스트 필터/정제
-  - 중괄호 메타, HTML, 괄호 주석, 특수 기호 제거
-- wav 존재 검증
-- 정제본 재작성 + `.bak` 백업 + `.dropped.txt` 로그 생성
+- 정책 필터(메타 태그, HTML, 괄호, 특수기호 제거)
+- wav 누락 라인 제거
+- 백업(`.bak`) + drop 로그(`.dropped.txt`) 생성
 
 ---
 
-## 6. MeloTTS 학습 아키텍처
+## 5. 한국어 텍스트 경로 명세
 
-## 6-1. 엔트리포인트와 실행 방식
+핵심 파일:
+- `MeloTTS/melo/text/korean.py`
+- 상세 이론: `MeloTTS/melo/text/korean.md`
 
-- 엔트리포인트: `MeloTTS/melo/train.py`
-- 권장 실행: `torchrun -m melo.train ...` (MeloTTS 루트에서)
+### 5-1. 핵심 함수 계약
 
-## 6-2. 구성 로딩
+#### `g2p(norm_text, model_id)`
 
-- `utils.get_hparams()`가 다음을 결합
-  - CLI 인자(`-m`, `-c`, `--pretrain_G` 등)
-  - config json
-  - 실행 디렉토리(`logs/<model_name>`)
+입력:
+- 문자열 텍스트
 
-## 6-3. 데이터 계층
+출력:
+- `phones: List[str]`
+- `tones: List[int]`
+- `word2ph: List[int]`
 
-- 학습/검증 리스트: `hps.data.training_files`, `hps.data.validation_files`
-- 로더: `TextAudioSpeakerLoader`
-- 배치: `TextAudioSpeakerCollate`
-- 분산 샘플링: `DistributedBucketSampler`
+동작:
+1. 정규화
+2. WordPiece 토큰화 (`tokenizer.tokenize`)
+3. `##` 조각 그룹핑
+4. 그룹 단위 g2pkk + jamo 변환
+5. `distribute_phone`로 token->phone 반복수 분배
+6. `[CLS]`, `[SEP]` 대응으로 `word2ph` 앞뒤 1 추가
 
-## 6-4. 모델 계층
+불변조건:
+- `len(word2ph) == len(tokenized) + 2`
 
-- Generator: `SynthesizerTrn`
-- Discriminator: `MultiPeriodDiscriminator`
-- Duration Discriminator: `DurationDiscriminator` (옵션)
-- 보조 블록:
-  - `attentions.py`의 encoder/attention
-  - `modules.py`의 flow/coupling/conv blocks
-  - `transforms.py`의 spline transform
+#### `get_bert_feature(text, word2ph, device, model_id)`
 
-## 6-5. 학습 루프/손실
+입력:
+- 텍스트
+- `word2ph`
 
-- adversarial + feature matching + mel + KL + duration 관련 손실 조합
-- AMP(`autocast`, `GradScaler`) 사용
-- 체크포인트 주기 저장:
-  - `logs/<model>/G_*.pth`, `D_*.pth`, `DUR_*.pth`
+출력:
+- `Tensor[H, sum(word2ph)]`
 
----
+동작:
+1. `tokenizer(text, return_tensors="pt")` (special token 포함)
+2. `hidden_states[-3]` 선택
+3. 각 토큰 feature를 `word2ph[i]`만큼 반복
+4. concat 후 transpose
 
-## 7. 텍스트/언어 처리 아키텍처
-
-## 7-1. 언어별 모듈
-
-- `melo/text/cleaner.py`가 언어별 모듈로 분기
-- 한국어는 `melo/text/korean.py` 중심으로 커스텀
-
-## 7-2. 한국어 경로 핵심
-
-1) 텍스트 정규화  
-2) BERT tokenizer WordPiece 토큰화  
-3) `##` 그룹핑 후 음소화(g2pkk + jamo)  
-4) `word2ph` 생성(토큰 축 -> phoneme 축 매핑)  
-5) BERT `hidden_states[-3]`를 phone-level feature로 확장  
-6) 모델 입력 shape `[H, phone_len]`로 정렬
-
-자세한 설명: `MeloTTS/melo/text/korean.md`
+불변조건:
+- `inputs['input_ids'].shape[-1] == len(word2ph)`
 
 ---
 
-## 8. ONNX 변환 아키텍처
+## 6. 학습 모델 구조 명세 (`MeloTTS/melo/models.py`)
 
-## 8-1. BERT ONNX
+## 6-1. `SynthesizerTrn` 구성
 
-- 스크립트: `MeloTTS/scripts/bert_onnx_converter.py`
-- 역할: 한국어 BERT 출력(`hidden_states[-3]`)을 ONNX로 내보내기
-- 목적: torch 없이도 text->BERT feature 생성
+`SynthesizerTrn`는 아래 블록을 포함한다.
 
-## 8-2. TTS ONNX
+1. `enc_p: TextEncoder`
+   - 입력: token/tone/language/bert/ja_bert
+   - 출력: `x`, `m_p`, `logs_p`, `x_mask`
 
-- 스크립트: `MeloTTS/scripts/onnx_converter.py`
-- 역할:
-  1) config + `G_*.pth` 로드
-  2) `SynthesizerTrnONNX` 구성
-  3) TTS 본체 ONNX export
+2. `enc_q: PosteriorEncoder`
+   - 입력: 정답 spec
+   - 출력: `z`, `m_q`, `logs_q`, `y_mask`
 
-의존 모듈:
+3. `flow: TransformerCouplingBlock` 또는 `ResidualCouplingBlock`
+   - 역할: posterior 잠재를 prior 잠재 공간으로 가역 변환
 
-- `melo/models_onnx.py` (상위 조립)
-- `melo/modules_onnx.py` (ONNX-safe 블록)
-- `melo/transforms_onnx.py` (ONNX-safe 변환)
+4. duration 경로
+   - `sdp: StochasticDurationPredictor`
+   - `dp: DurationPredictor`
+
+5. `dec: Generator`
+   - latent -> waveform 복원
+
+6. speaker conditioning
+   - 다화자일 때 `emb_g`
+   - 단일/참조 모드면 `ReferenceEncoder`
+
+### 6-2. TextEncoder 입출력
+
+입력:
+- `x`: `[B, T_text]`
+- `tone`: `[B, T_text]`
+- `language`: `[B, T_text]`
+- `bert`: `[B, 1024, T_text]`
+- `ja_bert`: `[B, 768, T_text]`
+
+출력:
+- hidden: `[B, H, T_text]`
+- `m_p`, `logs_p`: `[B, C, T_text]`
+- `x_mask`: `[B, 1, T_text]`
+
+### 6-3. PosteriorEncoder 입출력
+
+입력:
+- `y(spec)`: `[B, spec_channels, T_spec]`
+
+출력:
+- `z`, `m_q`, `logs_q`: `[B, C, T_spec]`
+- `y_mask`: `[B, 1, T_spec]`
+
+### 6-4. 학습 forward(핵심 순서)
+
+`SynthesizerTrn.forward(...)`:
+
+1. speaker embedding `g` 구성
+2. `enc_p` 실행 -> `m_p`, `logs_p`
+3. `enc_q` 실행 -> `z`, `m_q`, `logs_q`
+4. `z_p = flow(z, y_mask, g)`
+5. monotonic alignment(`maximum_path`) 계산
+6. alignment로 `m_p/logs_p`를 frame 축으로 확장
+7. random segment slice
+8. `dec(z_slice, g)`로 파형 조각 생성
+
+반환:
+- `y_hat`, `l_length`, `attn`, `ids_slice`, masks,
+- latent tuple `(z, z_p, m_p, logs_p, m_q, logs_q)`,
+- duration tuple `(hidden_x, logw, logw_)`
+
+### 6-5. 추론 forward(핵심 순서)
+
+`SynthesizerTrn.infer(...)`:
+
+1. `enc_p`
+2. `logw = sdp(reverse=True)*sdp_ratio + dp*(1-sdp_ratio)`
+3. `w = exp(logw) * x_mask * length_scale`
+4. `w_ceil`로 경로 생성 (`generate_path`)
+5. `m_p/logs_p`를 생성 길이로 확장
+6. `z_p = m_p + randn * exp(logs_p) * noise_scale`
+7. `z = flow(z_p, reverse=True)`
+8. `o = dec(z)`
 
 ---
 
-## 9. ONNX 추론 아키텍처
+## 7. 학습 루프 명세 (`MeloTTS/melo/train.py`)
 
-## 9-1. 내부 스크립트
+### 7-1. 배치 텐서 계약
 
-- `MeloTTS/scripts/infer_onnx.py`
-- 흐름:
-  1) config 로드
-  2) KR g2p/word2ph 생성
-  3) BERT ONNX 실행(선택)
-  4) TTS ONNX 입력 feed 구성
-  5) ORT 실행 후 wav 저장
+데이터로더 출력:
+- `x`, `x_lengths`
+- `spec`, `spec_lengths`
+- `y`, `y_lengths`
+- `speakers`, `tone`, `language`
+- `bert`, `ja_bert`
 
-## 9-2. 독립 런타임
+### 7-2. BERT 캐시 동작
 
-- `MeloTTS/tts_runtime/`
-- 목적:
-  - `melo` 내부 폴더 의존 최소화
-  - 다른 프로젝트로 이식 가능한 ONNX 추론 패키지 제공
+`melo/data_utils.py:get_text` 기준:
+- 캐시 경로: `<wav>.bert.pt`
+- 존재 시 로드
+- 없거나 shape mismatch면 생성 후 저장
+
+즉 "학습 시 매 스텝 BERT 모델 호출"이 아니라,
+- 최초 생성 후 캐시 재사용이 기본
+
+### 7-3. 손실 계산 순서
+
+1. Generator forward
+2. Discriminator 업데이트(생성파형 detach)
+3. Duration Discriminator 업데이트(옵션)
+4. Generator 업데이트
+
+사용 손실:
+- `loss_disc`: 판별기 손실
+- `loss_gen`: 생성기 adversarial 손실
+- `loss_fm`: feature matching
+- `loss_mel`: L1 mel
+- `loss_dur`: duration 항
+- `loss_kl`: KL(prior/posterior 정렬)
+- duration discriminator generator 항(옵션)
 
 ---
 
-## 10. 설정(Config) 아키텍처
+## 8. ONNX 구조 명세
 
-## 10-1. 핵심 필드
+## 8-1. 왜 ONNX 전용 모듈이 필요한가
 
-- 데이터 경로: training/validation filelist
-- 오디오 파라미터: sample rate, mel 관련 파라미터
-- 모델 차원: hidden/channel/speaker/language/tone 크기
-- 학습 파라미터: lr, batch size, epoch, fp16 등
+학습용 모듈(`modules.py`, `transforms.py`)은
+- reverse/logdet/동적 분기/수치 경로가 섞여 있어 export 취약성이 높다.
 
-## 10-2. 정렬 민감 항목
+그래서 ONNX 전용으로 분리:
+- `melo/models_onnx.py`
+- `melo/modules_onnx.py`
+- `melo/transforms_onnx.py`
 
-특히 아래 항목은 학습/추론/ONNX 간 불일치 시 오류나 품질 저하가 발생한다.
+### 8-2. `SynthesizerTrnONNX` 입력 계약
 
-- `symbols` 순서/길이
-- `num_tones`
+입력 이름(onnx_converter 기준):
+- `x`
+- `x_lengths`
+- `sid`
+- `tone`
+- `language`
+- `bert`
+- `ja_bert`
+- `noise_scale`
+- `length_scale`
+- `noise_scale_w`
+
+shape:
+- `x`: `[B, T]`
+- `x_lengths`: `[B]`
+- `sid`: `[B]`
+- `tone`, `language`: `[B, T]`
+- `bert`: `[B, 1024, T]`
+- `ja_bert`: `[B, 768, T]`
+- scale 계열: scalar tensor
+
+제약:
+- 현재 구현은 B=1 경로 고정
+
+### 8-3. ONNX forward 요약
+
+1. `enc_p`
+2. `dp`로 `logw`
+3. `w_ceil`
+4. `_expand_by_duration(m_p/logs_p)`
+5. 샘플링 `z_p`
+6. `flow_inv`
+7. `dec`
+
+---
+
+## 9. ONNX 변환 명세
+
+### 9-1. BERT ONNX 변환
+
+파일: `MeloTTS/scripts/bert_onnx_converter.py`
+
+역할:
+- HF BERT를 ONNX로 export
+- hidden state에서 `[-3]` 경로를 추론 입력으로 맞춤
+
+주의:
+- tokenizer 설정(예: max_length, truncation)은 더미 입력 shape에 영향
+
+### 9-2. TTS ONNX 변환
+
+파일: `MeloTTS/scripts/onnx_converter.py`
+
+동작:
+1. config 로드
+2. `SynthesizerTrnONNX` 생성
+3. 체크포인트 로드(키/shape 검증)
+4. 더미 입력 생성
+5. `torch.onnx.export` 실행
+
+핵심 설정:
+- `dynamo=False` (legacy exporter 경로)
+- dynamic axes: text 길이 `T`, audio 길이 `T_audio`
+
+---
+
+## 10. 설정(config) 필수 항목
+
+최소한 아래 항목은 반드시 맞아야 한다.
+
+### 10-1. top-level
 - `num_languages`
-- `data.spk2id`, `data.n_speakers`
+- `num_tones`
+- `symbols`
+
+### 10-2. data
+- `training_files`, `validation_files`
+- `sampling_rate`, `hop_length`, `filter_length`, `win_length`
+- `n_mel_channels`, `mel_fmin`, `mel_fmax`
+- `add_blank`
+- `n_speakers`, `spk2id`
+
+### 10-3. model
+- `inter_channels`, `hidden_channels`, `filter_channels`
+- `n_heads`, `n_layers`, `n_layers_trans_flow`
+- `kernel_size`, `p_dropout`
+- vocoder 파라미터(`resblock*`, `upsample*`)
+- `gin_channels`
+- duration/flow 사용 옵션
+
+### 10-4. train
+- `batch_size`, `learning_rate`, `epochs`
+- `fp16_run`
+- 손실 가중치(`c_mel`, `c_kl`)
+- interval(`log_interval`, `eval_interval`)
 
 ---
 
-## 11. 학습/추론 산출물(Artifacts)
+## 11. 실패 포인트와 디버깅 규칙
 
-## 11-1. 학습 산출물
+### 11-1. `ModuleNotFoundError: melo`
+- 원인: 실행 위치/방식 문제
+- 해결: `MeloTTS` 루트에서 `python -m ...`, `torchrun -m ...`
 
-- `logs/<model>/G_*.pth`
-- `logs/<model>/D_*.pth`
-- `logs/<model>/DUR_*.pth`
-- `logs/<model>/config.json` (실행 시점 config 스냅샷)
+### 11-2. ONNX `Gather idx out of bounds`
+- 원인: tone/language/symbols 인덱스 불일치
+- 점검:
+  1) `num_tones`, `num_languages`
+  2) `symbols` 길이/순서
+  3) 추론 파이프라인의 tone/language 매핑
 
-## 11-2. ONNX 산출물
+### 11-3. MeCab/unidic 오류
+- 해결: `python -m unidic download`
 
-- BERT ONNX: `onnx_out/bert_kor.onnx`
-- TTS ONNX: `onnx_out/<model>.onnx`
-- 추론 wav: `out.wav` 또는 지정 출력 경로
-
----
-
-## 12. 실행/배포 규칙 (권장)
-
-1) MeloTTS 학습/torch 추론은 `MeloTTS` 루트에서 모듈 실행  
-   - `torchrun -m melo.train ...`  
-   - `python -m melo.infer ...`
-
-2) ONNX 추론 배포는 `tts_runtime` 패키지 경로 사용
-
-3) config-ckpt-onnx 세트는 동일 실험에서 나온 조합으로 고정
+### 11-4. 품질 저하(ONNX)
+- 확인:
+  1) BERT hidden layer 선택(`-1/-2/-3`)
+  2) tokenizer 처리 일치(정규화/분절)
+  3) export 옵션(opset/dynamic)
+  4) config-ckpt-onnx 조합 동일성
 
 ---
 
-## 13. 현재 코드 상태 
+## 12. 향후 확장
 
-- 사용 중:
-  - `models_onnx.py`, `modules_onnx.py`, `transforms_onnx.py`
-
-
----
-
-## 14. 향후 확장 지점
-
-- GPT-SoVITS 파이프라인 추가 예정
-- 토크나이저를 포함해서 onnx 런타임 완전 독립화
+- GPT-SoVITS 파이프라인 추가
+- 동일 데이터/평가 지표로 MeloTTS와 비교 실험 자동화
+- tokenizer 자산까지 포함한 ONNX 런타임 완전 독립화
 

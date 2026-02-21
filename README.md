@@ -51,7 +51,7 @@ uv pip install -r requirements.txt
 `melo` import 에러를 막기 위해 editable 설치를 권장합니다.
 
 ```bash
-cd /home/ahnhs2k/pytorch-demo/Kor_Voice_Lab/MeloTTS
+cd MeloTTS
 uv pip install -e .
 ```
 
@@ -68,7 +68,6 @@ uv run python -m unidic download
 `asr_lab/transcribe_whisper.py`로 오디오 폴더를 전사해서 MeloTTS용 메타데이터를 만듭니다.
 
 ```bash
-cd /home/ahnhs2k/pytorch-demo/Kor_Voice_Lab
 uv run asr_lab/transcribe_whisper.py \
   --audio_dir path/to/wavs \
   --out_metadata path/to/metadata.list \
@@ -106,6 +105,7 @@ uv run python scripts/download_kr_base.py
 
 - `MeloTTS/pretrained/kr/checkpoint.pth`
 - `MeloTTS/pretrained/kr/config.json`
+- `MeloTTS/pretrained/kr/bert-kor-base/*` (BERT 모델/토크나이저 로컬 자산)
 
 ### 방법 B. 학습 시 자동 사용
 
@@ -155,6 +155,10 @@ uv run python scripts/bert_onnx_converter.py \
   --device cuda
 ```
 
+참고:
+- 변환 시 `onnx_out/` 폴더에 ONNX 파일과 함께 tokenizer 파일도 같이 저장됩니다.
+- 이후 ONNX 추론은 `--bert onnx_out/bert_kor.onnx` 경로 기준으로 같은 폴더의 tokenizer를 우선 사용합니다.
+
 ### 8-2. TTS ONNX 변환
 
 ```bash
@@ -189,7 +193,7 @@ cd MeloTTS/tts_runtime
 uv pip install -r requirements.txt
 uv run infer_onnx.py \
   --onnx ../onnx_out/model.onnx \
-  --bert ../onnx_out/model.onnx \
+  --bert ../onnx_out/bert_kor.onnx \
   --config ../logs/model_dir/config.json \
   --text "오늘은 날씨가 정말 좋네요." \
   --speaker 0 \

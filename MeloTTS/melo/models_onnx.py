@@ -44,9 +44,42 @@ class TextEncoderONNX(nn.Module):
         gin_channels: int,
         num_languages: int,
         num_tones: int,
-        bert_dim: int = 1024,     # (중요) bert_proj 입력 채널
-        ja_bert_dim: int = 768,   # (중요) ja_bert_proj 입력 채널
+        bert_dim: int = 1024,     # bert_proj 입력 채널
+        ja_bert_dim: int = 768,   # ja_bert_proj 입력 채널
     ):
+        """
+        Args:
+            n_vocab:
+                입력 토큰 사전 크기. `symbols` 길이와 맞춰야 한다.
+            out_channels:
+                prior 통계 채널 수. 최종 출력은 `out_channels * 2`로 만들고
+                이를 `m`, `logs`로 분리한다.
+            hidden_channels:
+                텍스트 인코더 내부 기본 채널 폭.
+                token/tone/language 임베딩 차원과 encoder 입력 차원으로 쓰인다.
+            filter_channels:
+                encoder 내부 FFN/conv 계열의 중간 채널 폭.
+            n_heads:
+                multi-head attention의 head 개수.
+            n_layers:
+                encoder 레이어 수.
+            kernel_size:
+                encoder 내부 conv 계열 커널 크기.
+            p_dropout:
+                encoder 내부 dropout 비율.
+            gin_channels:
+                speaker embedding 등 글로벌 조건 채널 수.
+            num_languages:
+                language embedding 테이블 크기.
+            num_tones:
+                tone embedding 테이블 크기.
+            bert_dim:
+                `bert_proj` 입력 채널 수.
+                checkpoint의 `enc_p.bert_proj.weight` shape와 일치해야 한다.
+            ja_bert_dim:
+                `ja_bert_proj` 입력 채널 수.
+                checkpoint의 `enc_p.ja_bert_proj.weight` shape와 일치해야 한다.
+        """
         super().__init__()
 
         # 기본 설정
@@ -81,7 +114,7 @@ class TextEncoderONNX(nn.Module):
             gin_channels=gin_channels,
         )
 
-        # ---- stats projection ----
+        # stats projection
         self.proj = nn.Conv1d(hidden_channels, out_channels * 2, kernel_size=1)
 
     def forward(
@@ -94,24 +127,24 @@ class TextEncoderONNX(nn.Module):
         ja_bert: torch.Tensor,    # [B, 768,  T] KR/JP/EN용 (KR에서는 여기에 kykim 출력)
         g: torch.Tensor | None = None,
     ):
-        # 1) token/tone/lang embedding: [B,T,H]
+        # 1. token/tone/lang embedding: [B,T,H]
         x_emb = self.emb(x) + self.tone_emb(tone) + self.language_emb(language)
 
-        # 2) bert/ja_bert projection:
-        #    bert_proj/ja_bert_proj 입력은 [B,C,T]가 맞다. (transpose 금지)
+        # 2. bert/ja_bert projection:
+        #    bert_proj/ja_bert_proj 입력은 [B,C,T]
         bert_emb = self.bert_proj(bert).transpose(1, 2)        # [B,T,H]
         ja_bert_emb = self.ja_bert_proj(ja_bert).transpose(1, 2)  # [B,T,H]
 
-        # 3) 합산 후 scale
+        # 3. 합산 후 scale
         x_sum = (x_emb + bert_emb + ja_bert_emb) * math.sqrt(self.hidden_channels)
 
-        # 4) [B,H,T] 변환
+        # 4. [B,H,T] 변환
         x_sum = x_sum.transpose(1, 2)
 
-        # 5) mask
+        # 5. mask
         x_mask = torch.unsqueeze(commons.sequence_mask(x_lengths, x_sum.size(2)), 1).to(x_sum.dtype)
 
-        # 6) encoder -> stats
+        # 6. encoder -> stats
         h = self.encoder(x_sum * x_mask, x_mask, g=g)
         stats = self.proj(h) * x_mask
 
@@ -121,7 +154,28 @@ class TextEncoderONNX(nn.Module):
 
 # DurationPredictorONNX (dp-only)
 class DurationPredictorONNX(nn.Module):
+    """
+    ONNX 추론용 duration predictor.
+
+    텍스트 인코더 출력(`x`)에서 길이(log-duration)를 예측하며,
+    출력 shape는 `[B, 1, T]`다.
+    """
+
     def __init__(self, in_channels: int, filter_channels: int, kernel_size: int, p_dropout: float, gin_channels: int = 0):
+        """
+        Args:
+            in_channels:
+                입력 feature 채널 수. 보통 `hidden_channels`와 동일하다.
+            filter_channels:
+                predictor 내부 중간 채널 수.
+            kernel_size:
+                1D conv 커널 크기.
+            p_dropout:
+                conv 블록 사이 dropout 비율.
+            gin_channels:
+                글로벌 조건 채널 수.
+                0이 아니면 `cond` conv를 만들고, forward에서 x에 조건을 더한다.
+        """
         super().__init__()
         self.drop = nn.Dropout(p_dropout)
         self.conv_1 = nn.Conv1d(in_channels, filter_channels, kernel_size, padding=kernel_size // 2)
@@ -227,6 +281,43 @@ class SynthesizerTrnONNX(nn.Module):
     """MeloTTS 체크포인트를 ONNX 추론 경로로 내보내기 위한 합성기."""
 
     def __init__(self, hps):
+        """
+        Args:
+            hps:
+                MeloTTS 설정 객체(HParams).
+
+                이 클래스에서 사용하는 주요 항목:
+                - hps.model.inter_channels:
+                    flow/decoder가 다루는 latent 채널 수.
+                - hps.model.hidden_channels:
+                    text encoder 및 duration predictor의 기본 채널 수.
+                - hps.model.filter_channels:
+                    encoder/flow 내부 중간 채널 수.
+                - hps.model.n_heads, hps.model.n_layers:
+                    attention encoder 구조 파라미터.
+                - hps.model.kernel_size, hps.model.p_dropout:
+                    conv/encoder 공통 하이퍼파라미터.
+                - hps.model.n_flow_layer:
+                    coupling flow 반복 횟수.
+                - hps.model.n_layers_trans_flow:
+                    flow 내부 transformer coupling 깊이.
+                - hps.model.resblock, resblock_kernel_sizes,
+                  resblock_dilation_sizes, upsample_rates,
+                  upsample_initial_channel, upsample_kernel_sizes:
+                    vocoder(Generator) 구조 파라미터.
+                - hps.model.gin_channels:
+                    speaker conditioning 채널 수.
+                - hps.data.n_speakers:
+                    speaker embedding 테이블 크기.
+                    0 이하면 sid 경로를 구성할 수 없어 예외를 발생시킨다.
+                - hps.num_languages, hps.num_tones:
+                    text encoder의 language/tone embedding 크기.
+
+        Notes:
+            - ONNX 추론 경로 단순화를 위해 배치 크기 B=1을 전제로 한다.
+            - `noise_scale_w`는 입력 시그니처 호환성을 위해 남겨둔 값이며,
+              현재 dp-only 경로에서는 직접 사용하지 않는다.
+        """
         super().__init__()
 
         self.inter_channels = hps.model["inter_channels"]

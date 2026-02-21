@@ -15,6 +15,7 @@ import re
 import sys
 import unicodedata
 from typing import Dict, List, Tuple, Optional
+from pathlib import Path
 
 import torch
 from transformers import AutoTokenizer, AutoModelForMaskedLM
@@ -107,9 +108,13 @@ def distribute_phone(n_phone: int, n_word: int) -> List[int]:
 
 
 # Korean BERT
-# BERT 모델에 따라 수정이 필요해진다.
-# 그 외 후보 BERT_MODEL_ID = "klue/bert-base"
-BERT_MODEL_ID = "kykim/bert-kor-base"
+# 기본값은 로컬 pretrained 경로를 우선 사용하고, 없으면 HF repo id를 사용한다.
+_LOCAL_KR_BERT_DIR = (
+    Path(__file__).resolve().parents[2] / "pretrained" / "kr" / "bert-kor-base"
+)
+BERT_MODEL_ID = (
+    str(_LOCAL_KR_BERT_DIR) if _LOCAL_KR_BERT_DIR.exists() else "kykim/bert-kor-base"
+)
 
 _models: Dict[str, torch.nn.Module] = {}
 _tokenizers: Dict[str, AutoTokenizer] = {}
