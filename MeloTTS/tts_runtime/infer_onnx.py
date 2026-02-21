@@ -271,14 +271,14 @@ def infer_tts_onnx(
     symbols = hps.symbols
     symbol_to_id = {s: i for i, s in enumerate(symbols)}
 
-    # 1) text normalize + g2p
+    # 1. text normalize + g2p
     norm_text = text_normalize(text)
     phones, tones, word2ph = g2p_kr(norm_text, model_id=tokenizer_source)
     phones, tones, lang_ids = cleaned_text_to_sequence(
         phones, tones, language, symbol_to_id
     )
 
-    # 2) add_blank (train/infer parity)
+    # 2. add_blank (train/infer parity)
     if getattr(hps.data, "add_blank", False):
         phones = intersperse(phones, 0)
         tones = intersperse(tones, 0)
@@ -287,7 +287,7 @@ def infer_tts_onnx(
             word2ph[i] = word2ph[i] * 2
         word2ph[0] += 1
 
-    # 3) BERT (KR -> ja_bert)
+    # 3. BERT (KR -> ja_bert)
     if getattr(hps.data, "disable_bert", False):
         bert = np.zeros((1024, len(phones)), dtype=np.float32)
         ja_bert = np.zeros((768, len(phones)), dtype=np.float32)
@@ -311,7 +311,7 @@ def infer_tts_onnx(
             f"ja_bert len mismatch: {ja_bert.shape[1]} vs {len(phones)}"
         )
 
-    # 4) Batchify (B=1)
+    # 4. Batchify (B=1)
     x = np.array(phones, dtype=np.int64)[None, :]
     tone = np.array(tones, dtype=np.int64)[None, :]
     language_ids = np.array(lang_ids, dtype=np.int64)[None, :]
@@ -325,14 +325,14 @@ def infer_tts_onnx(
     noise_scale_w = np.array(noise_scale_w, dtype=np.float32)
     length_scale = np.array(length_scale, dtype=np.float32)
 
-    # 5) ONNX Runtime (TTS)
+    # 5. ONNX Runtime (TTS)
     providers = ["CPUExecutionProvider"]
     if device == "cuda":
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
     sess = ort.InferenceSession(onnx_path, providers=providers)
 
-    # 6) Run inference (handle optional inputs in ONNX graph)
+    # 6. Run inference (handle optional inputs in ONNX graph)
     input_names = {i.name for i in sess.get_inputs()}
     feed = {
         "x": x,
@@ -352,7 +352,7 @@ def infer_tts_onnx(
 
     audio = audio[0, 0]
 
-    # 7) Save wav
+    # 7. Save wav
     sr = hps.data.sampling_rate
     sf.write(out_path, audio, sr)
     # print(f"[OK] saved -> {out_path}")

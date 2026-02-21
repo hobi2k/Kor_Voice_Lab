@@ -42,6 +42,7 @@ class LayerNorm(nn.Module):
     """
     Conv1d 계열 텐서 [B, C, T]를 대상으로 하는 LayerNorm
     - ONNX에서는 F.layer_norm이 안정적으로 변환되는 편이라 그대로 사용
+    - 모노 음성은 채널(C)이 1
     """
     def __init__(self, channels: int, eps: float = 1e-5) -> None:
         super().__init__()
@@ -231,7 +232,7 @@ class WN(nn.Module):
 
         # commons.fused_add_tanh_sigmoid_multiply에서 채널 수 텐서 필요
         # ONNX에서 IntTensor 상수 생성은 대체로 문제 없지만,
-        # 아주 빡빡한 런타임이면 buffer로 빼도 됨.
+        # 아주 빡빡한 런타임이면 buffer로 빼도 됨
         n_channels_tensor = torch.IntTensor([self.hidden_channels]).to(device=x.device)
 
         # conditioning (조건) 투영

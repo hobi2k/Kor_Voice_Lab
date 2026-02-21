@@ -1,7 +1,5 @@
-# flake8: noqa: E402
-
 """
-MeloTTS 루트에서만 학습 실행을 지원한다.
+MeloTTS 학습 스크립트
 
 cd /home/ahnhs2k/pytorch-demo/Kor_Voice_Lab/MeloTTS
 torchrun --nproc_per_node=1 --master_port=29501 \
@@ -320,16 +318,16 @@ def train_and_evaluate(
     1 epoch 학습을 수행하고 주기적으로 평가/체크포인트 저장을 수행한다.
 
     Args:
-        rank: 현재 프로세스의 분산 rank.
-        epoch: 현재 epoch 번호.
-        hps: config에서 로드한 하이퍼파라미터 객체.
-        nets: (generator, discriminator, duration_discriminator) 묶음.
-        optims: `nets`와 대응되는 옵티마이저 묶음.
-        schedulers: `optims`와 대응되는 LR 스케줄러 묶음.
+        rank: 현재 프로세스의 분산 rank
+        epoch: 현재 epoch 번호
+        hps: config에서 로드한 하이퍼파라미터 객체
+        nets: (generator, discriminator, duration_discriminator) 묶음
+        optims: `nets`와 대응되는 옵티마이저 묶음
+        schedulers: `optims`와 대응되는 LR 스케줄러 묶음
         scaler: AMP용 GradScaler.
-        loaders: (train_loader, eval_loader) 묶음.
-        logger: rank 0에서 사용하는 로거.
-        writers: rank 0에서 사용하는 tensorboard writer 묶음.
+        loaders: (train_loader, eval_loader) 묶음
+        logger: rank 0에서 사용하는 로거
+        writers: rank 0에서 사용하는 tensorboard writer 묶음
     """
     net_g, net_d, net_dur_disc = nets
     optim_g, optim_d, optim_dur_disc = optims

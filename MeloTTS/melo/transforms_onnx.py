@@ -1,5 +1,5 @@
 """
-ONNX 내보내기/실행에 안전한 rational-quadratic spline 변환 구현.
+ONNX 내보내기/실행에 안전한 rational-quadratic spline 변환 구현
 
 핵심 제약:
 - numpy 미사용 (torch 연산만 사용)
@@ -102,7 +102,7 @@ def unconstrained_rational_quadratic_spline(
     min_derivative: float = DEFAULT_MIN_DERIVATIVE,
 ):
     """
-    선형 tail을 갖는 unconstrained spline 구현(ONNX 안전 경로).
+    선형 tail을 갖는 unconstrained spline 구현(ONNX 안전 경로)
 
     구현 포인트:
     - spline 함수 호출 시 boolean mask 슬라이싱을 사용하지 않는다.

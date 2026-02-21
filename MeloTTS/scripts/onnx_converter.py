@@ -77,20 +77,20 @@ def get_text_for_tts_infer_kr(
     device: torch.device,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    반환:
+    Returns:
       bert      : [1024, T]  (KR은 zeros)
       ja_bert   : [768,  T]  (KR은 kykim BERT feature)
       phone     : [T]
       tone      : [T]
       language  : [T]
     """
-    # 1) cleaner
+    # 1. cleaner
     norm_text, phone_list, tone_list, word2ph_list = clean_text(text, language_str)
 
-    # 2) id 시퀀스화
+    # 2. id 시퀀스화
     phone_list, tone_list, language_list = cleaned_text_to_sequence(phone_list, tone_list, language_str)
 
-    # 3) blank intersperse 옵션 반영 (훈련/추론 일치 중요)
+    # 3. blank intersperse 옵션 반영 (훈련/추론 일치 중요)
     if getattr(hps.data, "add_blank", False):
         phone_list = commons.intersperse(phone_list, 0)
         tone_list = commons.intersperse(tone_list, 0)
@@ -99,7 +99,7 @@ def get_text_for_tts_infer_kr(
             word2ph_list[i] = word2ph_list[i] * 2
         word2ph_list[0] += 1
 
-    # 4) BERT feature
+    # 4. BERT feature
     if getattr(hps.data, "disable_bert", False):
         bert_feature = torch.zeros(1024, len(phone_list), dtype=torch.float32)
         ja_bert_feature = torch.zeros(768, len(phone_list), dtype=torch.float32)
@@ -141,19 +141,19 @@ def build_model_and_load(hps, ckpt_path: str, device: str):
 
     model_sd = model.state_dict()
 
-    # 1) flow_inv.* 는 체크포인트에 존재할 수 없는 파생 경로라 검증/로드에서 제외
+    # 1. flow_inv.* 는 체크포인트에 존재할 수 없는 파생 경로라 검증/로드에서 제외
     skip_prefixes = (
         "flow_inv.",  # inverse wrapper가 fwd를 submodule로 들고 있어서 생기는 중복 경로
     )
 
-    # 2) 검증: 모델이 요구하는 키 중 skip_prefix 제외 항목이 체크포인트에 있는지 확인
+    # 2. 검증: 모델이 요구하는 키 중 skip_prefix 제외 항목이 체크포인트에 있는지 확인
     for k in model_sd.keys():
         if k.startswith(skip_prefixes):
             continue
         if k not in state:
             raise RuntimeError(f"[CKPT KEY MISSING] {k}")
 
-    # 3) 로드: skip_prefix 제외 + shape 일치 키만 로드 (나머지는 초기값 유지)
+    # 3. 로드: skip_prefix 제외 + shape 일치 키만 로드 (나머지는 초기값 유지)
     load_dict = {}
     for k, v in state.items():
         if k.startswith(skip_prefixes):

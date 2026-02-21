@@ -1,5 +1,5 @@
 """
-KR base 체크포인트(config/checkpoint)와 한국어 BERT 자산을 로컬에 내려받는다.
+KR base 체크포인트(config/checkpoint)와 한국어 BERT 모델을 로컬에 내려받는다.
 
 기본 저장 경로:
 - MeloTTS: pretrained/kr/{checkpoint.pth, config.json}
