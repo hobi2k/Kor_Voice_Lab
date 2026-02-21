@@ -9,3 +9,23 @@ build/
 
 *.zip
 *.wav
+
+# Local environments
+.venv/
+
+# Never commit heavy/generated MeloTTS artifacts
+MeloTTS/logs/
+MeloTTS/onnx_out/
+MeloTTS/pretrained/
+
+# Case-variant safety
+meloTTS/logs/
+meloTTS/onnx_out/
+meloTTS/pretrained/
+
+# Local documentation drafts/templates
+docs/
+
+# Never commit ONNX artifacts
+*.onnx
+*.onnx.data
