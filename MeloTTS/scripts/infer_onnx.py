@@ -2,15 +2,15 @@
 MeloTTS KR 모델을 위한 torch-free ONNX 추론 스크립트.
 
 Examples:
-  uv run python scripts/infer_onnx.py \
-    --onnx onnx_out/melo_yae.onnx \
-    --bert scripts/bert_kor.onnx \
-    --config logs/yae_ko/config.json \
+  uv run python -m scripts.infer_onnx \
+    --onnx onnx_out/saya/melo_saya.onnx \
+    --bert onnx_out/bert_kor.onnx \
+    --config onnx_out/saya/config.json \
     --text "드디어 온닉스 생성에 성공했습니다. 지연을 최소로 해서 거의 실시간 음성 합성이 가능해요." \
     --speaker 0 \
     --lang KR \
     --device cpu \
-    --out out_cpu.wav
+    --out test_cpu.wav
 """
 import argparse
 import re

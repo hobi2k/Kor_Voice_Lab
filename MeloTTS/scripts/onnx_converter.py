@@ -13,10 +13,10 @@ MeloTTS ONNX Exporter (Korean / kykim/bert-kor-base 기준 "최종본")
 - 본 스크립트는 "TextEncoderONNX가 bert_proj=1024, ja_bert_proj=768"인 구조를 전제로 한다.
 - batch는 현실적으로 B=1을 표준으로 export한다.
 
-  uv run python scripts/onnx_converter.py \
-    --config logs/yae_ko/config.json \
-    --ckpt logs/yae_ko/G_35000.pth \
-    --out onnx_out/melo_yae.onnx \
+  uv run python -m scripts.onnx_converter \
+    --config logs/saya_ko/config.json \
+    --ckpt logs/saya_ko/G_36000.pth \
+    --out onnx_out/saya/melo_saya.onnx \
     --device cuda \
     --text "오늘은 날씨가 정말 좋네요."
 """
@@ -24,10 +24,18 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
+import shutil
 import logging
 from typing import Tuple, Dict, Any
 
 import torch
+
+# 스크립트 직접 실행(`python scripts/onnx_converter.py`) 시에도
+# MeloTTS 루트를 import 경로에 추가해 `melo` 패키지를 찾게 한다.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 from melo import commons
 from melo.text import cleaned_text_to_sequence, get_bert
@@ -265,6 +273,12 @@ def export_tts_onnx(
     )
 
     logger.info(f"[OK] TTS ONNX saved -> {out_path}")
+
+    # ONNX와 동일 폴더에 config.json을 함께 복사해 배포 시 짝을 유지한다.
+    out_dir = os.path.dirname(out_path) or "."
+    config_copy_path = os.path.join(out_dir, "config.json")
+    shutil.copy2(config_path, config_copy_path)
+    logger.info(f"[OK] config copied -> {config_copy_path}")
 
 
 def main():

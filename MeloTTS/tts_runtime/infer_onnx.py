@@ -1,10 +1,10 @@
 """
 Torch-free ONNX inference for MeloTTS (KR only), fully standalone.
 
-uv run infer_onnx.py \
-  --onnx /home/ahnhs2k/pytorch-demo/kor_voice_making/MeloTTS/onnx_out/melo_yae.onnx \
-  --bert /home/ahnhs2k/pytorch-demo/kor_voice_making/MeloTTS/scripts/bert_kor.onnx \
-  --config /home/ahnhs2k/pytorch-demo/kor_voice_making/MeloTTS/logs/yae_ko/config.json \
+uv run tts_runtime/infer_onnx.py \
+  --onnx onnx_out/saya/melo_saya.onnx \
+  --bert onnx_out/bert_kor.onnx \
+  --config onnx_out/saya/config.json \
   --text "오늘은 날씨가 정말 좋네요." \
   --speaker 0 \
   --lang KR \
