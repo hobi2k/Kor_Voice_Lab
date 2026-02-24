@@ -1,7 +1,7 @@
 """
 MeloTTS 학습 스크립트
 
-cd /home/ahnhs2k/pytorch-demo/Kor_Voice_Lab/MeloTTS
+example:
 torchrun --nproc_per_node=1 --master_port=29501 \
   -m melo.train \
   -m testing \

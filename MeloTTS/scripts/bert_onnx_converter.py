@@ -1,4 +1,5 @@
 """
+example:
 uv run python scripts/bert_onnx_converter.py \
   --model pretrained/kr/bert-kor-base \
   --out onnx_out/bert_kor.onnx \

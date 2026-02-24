@@ -13,6 +13,7 @@ MeloTTS ONNX Exporter (Korean / kykim/bert-kor-base 기준 "최종본")
 - 본 스크립트는 "TextEncoderONNX가 bert_proj=1024, ja_bert_proj=768"인 구조를 전제로 한다.
 - batch는 현실적으로 B=1을 표준으로 export한다.
 
+example:
   uv run python -m scripts.onnx_converter \
     --config logs/saya_ko/config.json \
     --ckpt logs/saya_ko/G_36000.pth \

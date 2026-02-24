@@ -1,11 +1,13 @@
 """
 Torch-free ONNX inference for MeloTTS (KR only), fully standalone.
 
+
+example:
 uv run tts_runtime/infer_onnx.py \
   --onnx onnx_out/saya/melo_saya.onnx \
   --bert onnx_out/bert_kor.onnx \
   --config onnx_out/saya/config.json \
-  --text "오늘은 날씨가 정말 좋네요." \
+  --text "테스트예요. 잘 부탁드립니다!" \
   --speaker 0 \
   --lang KR \
   --device cpu \
