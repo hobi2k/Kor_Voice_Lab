@@ -2,6 +2,9 @@
 
 Kor_Voice_Lab은 한국어 음성 데이터 파이프라인(ASR -> 전처리 -> TTS 학습)과 MeloTTS 기반 추론/ONNX 변환 워크플로우를 정리한 프로젝트입니다.
 
+예시 음성:
+- [Sample 1](out.wav)
+
 ## 0. 원본 리포지토리 및 라이선스
 
 - 이 프로젝트의 TTS 베이스는 원본 [`MeloTTS` 리포지토리](https://github.com/myshell-ai/MeloTTS)를 기반으로 합니다.
