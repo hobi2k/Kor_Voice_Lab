@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="korv_header.png" />
+</p>
+
 # Kor_Voice_Lab
 
 Kor_Voice_Lab은 한국어 음성 데이터 파이프라인(ASR -> 전처리 -> TTS 학습)과 MeloTTS 기반 추론/ONNX 변환 워크플로우를 정리한 프로젝트입니다.
