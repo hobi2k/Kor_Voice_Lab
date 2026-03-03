@@ -231,6 +231,12 @@ uv run infer_onnx.py \
 - pretrained 파일 위치 확인 (`MeloTTS/pretrained/kr/checkpoint.pth`)
 - 추론은 항상 모듈 실행(`python -m ...`) 우선
 
+## 12. 추후 업데이트
+- GPT-SoVITS 파이프라인 추가
+- QwenTTS 파이프라인 추가
+(기본적으로 Bert-VITS2 계열이 로컬 환경에서 가장 가볍고 빠르다.)
+(다만, 제로샷 문제 해결을 위해 최신 TTS 파이프라인 실험 예정)
+
 ## 인용
 
 이 프로젝트가 유용했다면 아래 형식으로 인용해 주세요.
